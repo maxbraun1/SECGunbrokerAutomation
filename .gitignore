@@ -1,0 +1,6 @@
+node_modules
+tmp
+.env
+davidsons_inventory.csv
+rsrinventory.txt
+attributes.txt
