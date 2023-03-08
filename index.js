@@ -7,6 +7,7 @@ import csvToJson from 'convert-csv-to-json';
 import { postLipseysProducts } from './listLipseys/index.js';
 import { postDavidsonsProducts } from './listDavidsons/index.js';
 import { postRSRProducts } from './listRSR/index.js';
+import { getInventory } from './listSportsSouth/index.js';
 
 dotenv.config();
 
@@ -30,7 +31,7 @@ function logProcess(message, type){
 let GunBrokerAccessToken = new Promise(function(resolve,reject){
   logProcess("Getting Gunbroker access token...");
   const gunbroker_credentials = { "Username": process.env.GUNBROKER_USERNAME, "Password": process.env.GUNBROKER_PASSWORD };
-  axios.post('https://api.sandbox.gunbroker.com/v1/Users/AccessToken', gunbroker_credentials,{
+  axios.post('https://api.gunbroker.com/v1/Users/AccessToken', gunbroker_credentials,{
   headers: {
     'Content-Type': 'application/json',
     'X-DevKey': process.env.GUNBROKER_DEVKEY
@@ -46,7 +47,7 @@ let GunBrokerAccessToken = new Promise(function(resolve,reject){
 
 let currentUserID = new Promise( async (resolve, reject) => {
   let token = await GunBrokerAccessToken;
-  axios.get('https://api.sandbox.gunbroker.com/v1/Users/AccountInfo',{
+  axios.get('https://api.gunbroker.com/v1/Users/AccountInfo',{
     headers: {
       'Content-Type': 'application/json',
       'X-DevKey': process.env.GUNBROKER_DEVKEY,
@@ -65,7 +66,7 @@ function checkAlreadyPosted(upc){
   return new Promise( async (resolve, reject) => {
     let userID = await currentUserID;
     let token = await GunBrokerAccessToken;
-    axios.get('https://api.sandbox.gunbroker.com/v1/Items?IncludeSellers='+userID+'&UPC='+upc,{
+    axios.get('https://api.gunbroker.com/v1/Items?IncludeSellers='+userID+'&UPC='+upc,{
       headers: {
         'Content-Type': 'application/json',
         'X-DevKey': process.env.GUNBROKER_DEVKEY,
@@ -91,7 +92,7 @@ function getAllListings(){
   return new Promise( async (resolve, reject) => {
     let userID = await currentUserID;
     let token = await GunBrokerAccessToken;
-    await axios.get('https://api.sandbox.gunbroker.com/v1/Items?BuyNowOnly=true&PageSize=1&IncludeSellers='+userID,{
+    await axios.get('https://api.gunbroker.com/v1/Items?BuyNowOnly=true&PageSize=1&IncludeSellers='+userID,{
       headers: {
         'Content-Type': 'application/json',
         'X-DevKey': process.env.GUNBROKER_DEVKEY,
@@ -104,7 +105,7 @@ function getAllListings(){
       let iterations = Math.ceil(listingsNum/300); // Number of times to request results in sets of 300
       for(let i = 1; i <= iterations; i++){
         let token = await GunBrokerAccessToken;
-        await axios.get('https://api.sandbox.gunbroker.com/v1/Items?BuyNowOnly=true&PageSize=300&PageIndex='+i+'&IncludeSellers='+userID,{
+        await axios.get('https://api.gunbroker.com/v1/Items?BuyNowOnly=true&PageSize=300&PageIndex='+i+'&IncludeSellers='+userID,{
           headers: {
             'Content-Type': 'application/json',
             'X-DevKey': process.env.GUNBROKER_DEVKEY,
@@ -146,7 +147,7 @@ let LipseyAuthToken = new Promise(function(resolve, reject){
   });
 });
 
-async function getLipseysInventory(upc){
+async function getLipseysInventory(){
   return new Promise( async (resolve,reject) => {
     let token = await LipseyAuthToken;
     logProcess("Retrieving Lipseys Inventory...");
@@ -189,7 +190,7 @@ async function getDavidsonsInventoryFile(){
         password: process.env.DAVIDSONS_FTP_PASSWORD,
         secure: false
       });
-      await client.downloadTo("davidsons_inventory.csv", "davidsons_inventory.csv");
+      await client.downloadTo("davidsons_quantity.csv", "davidsons_quantity.csv");
   }
   catch(err) {
       console.log(err);
@@ -202,16 +203,14 @@ async function getDavidsonsInventory(){
 
   await getDavidsonsInventoryFile();
 
-  let DavidsonsInventory = csvToJson.fieldDelimiter(',').getJsonFromCsv('davidsons_inventory.csv');
+  let DavidsonsInventory = csvToJson.fieldDelimiter(',').getJsonFromCsv('davidsons_quantity.csv');
 
   let products = [];
 
   DavidsonsInventory.map((item) => {
     let product = {};
-    product.upc = parseInt(item.UPCCode.replace('#', ''));
-    product.price = Number(item.DealerPrice.replace('$', ''));
-    product.quantity = parseInt(item.Quantity);
-    product.msrp = Number(item.RetailPrice.replace('$', ''));
+    product.upc = parseInt(item.UPC_Code.replace('#', ''));
+    product.quantity = parseInt(item.Quantity_NC.replace("+", "")) + parseInt(item.Quantity_AZ.replace("+", ""));
 
     products.push(product);
   });
@@ -253,7 +252,7 @@ async function getRSRInventory(){
 
   await getRSRInventoryFile();
 
-  let RSRInventory = csvToJson.getJsonFromCsv('rsrinventory.txt');
+  let RSRInventory = csvToJson.fieldDelimiter(';').getJsonFromCsv('rsrinventory.txt');
 
   let products = [];
 
@@ -273,7 +272,7 @@ async function getRSRInventory(){
 async function getListing(itemNo){
   return new Promise( async (resolve,reject)=>{
     let token = await GunBrokerAccessToken;
-    await axios.get('https://api.sandbox.gunbroker.com/v1/Items/' + itemNo,{
+    await axios.get('https://api.gunbroker.com/v1/Items/' + itemNo,{
       headers: {
         'Content-Type': 'application/json',
         'X-DevKey': process.env.GUNBROKER_DEVKEY,
@@ -282,7 +281,6 @@ async function getListing(itemNo){
     }).then((response) => {
       resolve({upc: response.data.upc, price: response.data.buyPrice, quantity: response.data.quantity});
     }).catch((error) => {
-      console.log(error);
       reject(error);
     })
   });
@@ -297,9 +295,11 @@ async function checkAllListings(){
   let DavidsonsInventory = await getDavidsonsInventory();
   let RSRInventory = await getRSRInventory();
 
+  let potentialDeletes = [];
+
   // Loop through every gunbroker listing
-  for(let i = 0; i <= listings.length; i++){
-    let listing = await getListing(listings[i]);
+  for(let i = 0; i < listings.length; i++){
+    let listing = await getListing(listings[i]).catch((error) => {console.log(error)});
 
     let lipseysResults = await LipseysInventory.find(item => item.upc == listing.upc);
     let RSRResults = await RSRInventory.find(item => item.upc == listing.upc);
@@ -309,17 +309,23 @@ async function checkAllListings(){
     if(davidsonsResults == undefined){davidsonsResults={};davidsonsResults.quantity = 0}
 
     if(listing.quantity > lipseysResults.quantity && listing.quantity > RSRResults.quantity && listing.quantity > davidsonsResults.quantity){
-      console.log(chalk.red.bold(listing.upc));
+      if(listing.upc){
+        potentialDeletes.push(listing.upc);
+
+        console.log(chalk.bold.bgYellow.black("--- Potential Delete ---"));
+        console.log(chalk.red.bold(listing.upc + " (" +listing.quantity + " listed)"));
+        console.log(chalk.bold.white(lipseysResults.quantity + " listed on Lipseys"));
+        console.log(chalk.bold.white(davidsonsResults.quantity + " listed on Davidsons"));
+        console.log(chalk.bold.white(RSRResults.quantity + " listed on RSR"));
+      }
     }
-    
-    /*
-    console.log(chalk.yellow.bold("Item: "+listing.upc));
-    console.log("Listed on Gunbroker: Quantity - "+listing.quantity+" | Price - "+listing.price);
-    console.log("For sale on Lipseys: Quantity - "+lipseysResults.quantity+" | Price - "+lipseysResults.price);
-    console.log("For sale on RSR: Quantity - "+RSRResults.quantity+" | Price - "+RSRResults.price);
-    console.log("For sale on Davidsons: Quantity - "+davidsonsResults.quantity+" | Price - "+davidsonsResults.price);
-    console.log("-----------------------------------------------------------------------------------------");*/
   }
+
+  var file = fs.createWriteStream('GunBrokerUPCChecks.txt');
+  file.on('error', function(err) { console.log(err) });
+  file.write("These UPCs are listed on GunBroker but may not be available (checked Lipseys, Davidsons, and RSR Group)\n");
+  potentialDeletes.forEach(function(upc) { file.write(upc + '\n'); });
+  file.end();
 }
 
 export {logProcess, currentUserID, GunBrokerAccessToken, checkAlreadyPosted, LipseyAuthToken};
@@ -327,16 +333,23 @@ export {logProcess, currentUserID, GunBrokerAccessToken, checkAlreadyPosted, Lip
 // RUN PROCESS
 
 async function postAll(){
-  console.log(chalk.green.bold("Posting Lipseys products..."));
+  //console.log(chalk.green.bold("Posting Lipseys products..."));
   //let lispeysPostCount = await postLipseysProducts();
-  console.log(chalk.green.bold("Posting Davidsons products..."));
-  //let davidsonsPostCount = await postDavidsonsProducts();
+  
   console.log(chalk.green.bold("Posting RSR products..."));
-  let RSRPostCount = await postRSRProducts();
+  let RSRPostCount = await postRSRProducts(900);
+
+  //console.log(chalk.green.bold("Posting Davidsons products..."));
+  //let davidsonsPostCount = await postDavidsonsProducts();
+
+  return;
 
   let totalPosted = lispeysPostCount + davidsonsPostCount + RSRPostCount;
 
-  console.log(chalk.green.bold(totalPosted + "listings posted."));
+  console.log(chalk.green.bold(totalPosted + " listings posted."));
 }
 
-postAll();
+// START
+//postAll();
+
+checkAllListings();

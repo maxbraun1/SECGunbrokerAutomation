@@ -4,41 +4,47 @@ import * as dotenv from 'dotenv';
 import descriptionGenerator from './descriptionGenerator.js';
 import { generateImages } from '../imageGenerator.js';
 import chalk from 'chalk';
+import * as ftp from 'basic-ftp';
+import csvToJson from 'convert-csv-to-json/src/csvToJson.js';
 import { logProcess } from '../index.js';
 import { GunBrokerAccessToken } from '../index.js';
+import { currentUserID } from '../index.js';
 import { checkAlreadyPosted  } from '../index.js';
-import { LipseyAuthToken } from '../index.js';
 
 dotenv.config();
 
-function getInventory(){
+async function getInventory(){
   return new Promise(async (resolve,reject) => {
-    let token = await LipseyAuthToken;
-    logProcess("Retrieving Lipseys Inventory...");
-    await axios.get('https://api.lipseys.com/api/Integration/Items/CatalogFeed', {
+    logProcess("Retrieving Sports South Inventory...");
+    await axios.get('http://webservices.theshootingwarehouse.com/smart/inventory.asmx/DailyItemUpdate?CustomerNumber='+process.env.SS_ACCOUNT_NUMBER+'&UserName='+process.env.SS_USERNAME+'&Password='+process.env.SS_PASSWORD+'&LastUpdate=1/1/1990&LastItem=-1&Source=string%20HTTP/1.1', {
       headers: {
-        Token: token
+        'Content-Type': 'application/x-www-form-urlencoded'
       }
     }).then(function (response) {
-      resolve(response.data.data);
+      console.log(response.data);
+      //resolve(response.data.data);
     }).catch(function (error) {
-      reject(error);
+      console.log(error);
+      //reject(error);
     });
   });
 }
 
-async function filterInventory(dataset){
+function filterInventory(inventory){
   logProcess("Filtering Results...");
   let lowestQuantityAllowed = 5;
-  let typesAllowed = ['Semi-Auto Pistol','Rifle', 'Revolver', 'Shotgun'];
+  let lowestPriceAllowed = 150;
+  let highestPriceAllowed = 2000;
+  let typesAllowed = ['Pistol: Semi-Auto','Pistol','Rifle: Semi-Auto','Rifle: Bolt Action','Rifle: Lever Action','Rifle: Pump Action','Rifle','Revolver','Shotgun: Pump Action',
+  'Shotgun: Over and Under','Shotgun: Semi-Auto','Shotgun: Lever Action','Shotgun: Single Shot','Shotgun: Bolt Action','Shotgun: Side by Side'];
   let filtered = [];
   
-  await dataset.map( async (item) => {
-    if(item.quantity >= lowestQuantityAllowed && typesAllowed.includes(item.type) && item.allocated == false && item.price > 150 && item.upc.toString().length == 12){
+  inventory.map( async (item) => {
+    if(item.Quantity >= lowestQuantityAllowed && typesAllowed.includes(item.GunType) && item.DealerPrice > lowestPriceAllowed && item.DealerPrice < highestPriceAllowed && item.UPCCode.toString().length == 12){
       filtered.push(item);
     }
   });
-  logProcess(chalk.green.bold(filtered.length) + " products eligable to post (after filter)");
+  console.log(inventory.length + " to " + filtered.length);
   return filtered;
 }
 
@@ -52,82 +58,85 @@ function postOnGunBroker(item){
       // Setting Quantity
       let quantity;
       
-      if(item.quantity >= 20){ quantity = 5 } else
-      if(item.quantity < 20){ quantity = 2 }
+      if(item.Quantity >= 20){ quantity = 5 } else
+      if(item.Quantity < 20){ quantity = 2 }
       else{ quantity = 0 };
 
       // Setting Price
       let price;
+      // Davidsons doesnt provide a MAP price
 
-      let cost = item.price;
-      let map = item.retailMap; // Map will be number, 0 if there is no map
+      let cost = item.DealerPrice;
+      let retail = item.RetailPrice; 
 
       price = cost * 1.15; // set price to cost of gun plus 15% then round to 2 decimals
       price = (Math.round(price * 100) / 100).toFixed(2);
 
-      if(price < map){ // if new price is lower than map, set price to map
-        price = map;
+      if(price < retail){ // if new price is lower than map, set price to map
+        price = retail;
       }
       
       // Setting Category IDs and Shipping Prices
       let categoryID;
       let ShippingPrice = 30;
 
-      switch(item.type) {
-        case 'Semi-Auto Pistol':
+      switch(item.GunType) {
+        case 'Pistol: Semi-Auto':
           ShippingPrice = 29;
           categoryID = 3026;
           break;
+        case 'Pistol':
+          ShippingPrice = 29;
+          categoryID = 3027;
+          break;
+        case 'Rifle: Semi-Auto':
+          categoryID = 3024;
+          break;
+        case 'Rifle: Bolt Action':
+          categoryID = 3022;
+          break;
+        case 'Rifle: Lever Action':
+          categoryID = 3023;
+          break;
+        case 'Rifle: Pump Action':
+          categoryID = 3102;
+          break;
         case 'Rifle':
-          switch (item.action) {
-            case 'Semi-Auto':
-              categoryID = 3024;
-              break;
-            case 'Single Shot':
-              categoryID = 3011;
-              break;
-            case 'Pump Action':
-              categoryID = 3102;
-              break;
-            case 'Bolt Action':
-              categoryID = 3022;
-              break;
-            case 'Lever Action':
-              categoryID = 3023;
-              break;
-            default:
-              categoryID = 3025;
-          }
+          categoryID = 3025;
           break;
         case 'Revolver':
+          ShippingPrice = 29;
           categoryID = 2325;
           break;
-        case 'Shotgun':
-          switch (item.action) {
-            case 'Semi-Auto':
-              categoryID = 3105;
-              break;
-            case 'Side By Side':
-              categoryID = 3104;
-              break;
-            case 'Over / Under':
-              categoryID = 3103;
-              break;
-            case 'Pump Action':
-              categoryID = 3106;
-              break;
-            default:
-              categoryID = 3108;
-          }
+        case 'Shotgun: Pump Action':
+          categoryID = 3106;
+          break;
+        case 'Shotgun: Over and Under':
+          categoryID = 3103;
+          break;
+        case 'Shotgun: Semi-Auto':
+          categoryID = 3105;
+          break;
+        case 'Shotgun: Lever Action':
+          categoryID = 3113;
+          break;
+        case 'Shotgun: Single Shot':
+          categoryID = 3107;
+          break;
+        case 'Shotgun: Bolt Action':
+          categoryID = 3112;
+          break;
+        case 'Shotgun: Side by Side':
+          categoryID = 3104;
           break;
         default:
           categoryID = 3004;
       }
 
-      var title = item.manufacturer + " " + item.model + " " + item.caliberGauge + " " + item.capacity + " | " + item.upc;
+      var title = item.Manufacturer + " " + item.ModelSeries + " " + item.Caliber + " " + item.Capacity + " | " + item.UPCCode;
 
       if(title.length > 75){
-        title = item.manufacturer + " " + item.model + " | " + item.upc;
+        title = item.Manufacturer + " " + item.ModelSeries + " | " + item.UPCCode;
         if(title.length > 75){
           return;
         }
@@ -142,9 +151,9 @@ function postOnGunBroker(item){
         CanOffer: false, 
         CategoryID: categoryID,
         Characteristics: {
-          Manufacturer: item.manufacturer,
-          Model: item.model,
-          Caliber: item.caliberGauge,
+          Manufacturer: item.Manufacturer,
+          Model: item.ModelSeries,
+          Caliber: item.Caliber,
         },
         Condition: 1, // Factory New
         CountryCode: "US",
@@ -153,7 +162,7 @@ function postOnGunBroker(item){
         InspectionPeriod: 1, // Sales are final
         isFFLRequired: true,
         ListingDuration: 90, // List for 90 days
-        MfgPartNumber: item.manufacturerModelNo,
+        MfgPartNumber: item.ModelSeries,
         PaymentMethods: {
           Check: false,
           VisaMastercard: true,
@@ -188,10 +197,9 @@ function postOnGunBroker(item){
           Other: false
         },
         ShippingClassCosts: { Ground: ShippingPrice },
-        SKU: 'LIP',
-        StandardTextID: 4713,
+        StandardTextID: 1138,
         Title: title,
-        UPC: item.upc,
+        UPC: item.UPCCode,
         WhoPaysForShipping: 8,
         WillShipInternational: false
       };
@@ -210,7 +218,8 @@ function postOnGunBroker(item){
       data.append("picture", img2Blob, 'picture2.jpeg');
 
       let token = await GunBrokerAccessToken;
-      await axios.post('https://api.gunbroker.com/v1/Items', data, {
+      
+      await axios.post('https://api.sandbox.gunbroker.com/v1/Items', data, {
         headers: {
           'Content-Type': 'multipart/form-data',
           'X-DevKey': process.env.GUNBROKER_DEVKEY,
@@ -236,7 +245,6 @@ function postOnGunBroker(item){
 }
 
 async function postAllListings(listings, limit){
-
   if(limit && limit < listings.length){
     listings = listings.slice(0, limit);
   }
@@ -250,31 +258,31 @@ async function postAllListings(listings, limit){
     count++;
 
     // Check if item is already posted
-    let alreadyPosted = await checkAlreadyPosted(item.upc);
+    let alreadyPosted = await checkAlreadyPosted(item.UPCCode);
     if(alreadyPosted){
-      console.log(chalk.bold.blue.bgWhite(" Lipseys Item "+ count + " / " + listings.length + " ") + chalk.bold.yellow(" ["+item.upc+"] Item already posted."));
+      console.log(chalk.bold.blue.bgWhite(" Davidsons Item "+ count + " / " + listings.length + " ") + chalk.bold.yellow(" ["+item.UPCCode+"] Item already posted."));
     }else{
-      await generateImages("https://www.lipseyscloud.com/images/"+item.imageName)
+      await generateImages('https://res.cloudinary.com/davidsons-inc/c_lpad,dpr_2.0,f_auto,h_635,q_100,w_635/v1/media/catalog/product/' + item.itemNo.charAt(0) + "/" + item.itemNo.charAt(1) + "/" + item.itemNo + ".jpg")
       .then( async () => {
         await postOnGunBroker(item, count).catch((error) => console.log(error)).then(() => {
           countPosted++;
-          console.log(chalk.bold.blue.bgWhite(" Lipseys Item "+ count + " / " + listings.length + " ") + chalk.bold.green(" [" + item.upc + "] Item (" + item.manufacturer + " " + item.model + ") Posted"));
+          console.log(chalk.bold.blue.bgWhite(" Davidsons Item "+ count + " / " + listings.length + " ") + chalk.bold.green(" [" + item.UPCCode + "] Item (" + item.Manufacturer + " " + item.ModelSeries + ") Posted"));
         });
       })
       .catch((error) => {
-        console.log(error);
+        console.log(chalk.bold.red("Image Download Error: "+error));
       });
     }
   }
-  console.log(chalk.bold.green("Lipseys postings complete. "+countPosted+" listings posted."));
+  console.log(chalk.bold.green("Davidsons postings complete. "+countPosted+" listings posted."));
   return countPosted;
 }
 
-async function postLipseysProducts(limit){
-  let inventory = await getInventory().catch((error) => console.log(error));
-  let filteredInventory = await filterInventory(inventory);
-  let countPosted = await postAllListings(filteredInventory, limit);
+async function postDavidsonsProducts(){
+  let inventory = await getInventory();
+  let filteredInventory = filterInventory(inventory);
+  let countPosted = await postAllListings(filteredInventory);
   return countPosted;
 }
 
-export {postLipseysProducts};
+export {getInventory};

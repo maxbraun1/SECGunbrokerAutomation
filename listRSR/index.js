@@ -133,16 +133,17 @@ function postOnGunBroker(item){
 
       switch(item.GunType) {
         case 'Modern Sporting Rifles':
-          ShippingPrice = 29;
           categoryID = 3024;
           break;
         case 'Sporting Shotguns':
           categoryID = 3103;
           break;
         case 'Pistols - Metal Frame':
+          ShippingPrice = 29;
           categoryID = 3026;
           break;
         case 'Pistols - Polymer Frame':
+          ShippingPrice = 29;
           categoryID = 3026;
           break;
         case 'Bullpups':
@@ -158,6 +159,7 @@ function postOnGunBroker(item){
           categoryID = 3027;
           break;
         case 'Revolvers':
+          ShippingPrice = 29;
           categoryID = 2325;
           break;
         case 'AK Style Rifles':
@@ -231,7 +233,8 @@ function postOnGunBroker(item){
           Other: false
         },
         ShippingClassCosts: { Ground: ShippingPrice },
-        StandardTextID: 1138,
+        SKU: 'RSR',
+        StandardTextID: 4713,
         Title: title,
         UPC: item.upc,
         WhoPaysForShipping: 8,
@@ -253,7 +256,7 @@ function postOnGunBroker(item){
 
       let token = await GunBrokerAccessToken;
       
-      await axios.post('https://api.sandbox.gunbroker.com/v1/Items', data, {
+      await axios.post('https://api.gunbroker.com/v1/Items', data, {
         headers: {
           'Content-Type': 'multipart/form-data',
           'X-DevKey': process.env.GUNBROKER_DEVKEY,
@@ -312,9 +315,9 @@ async function postAllListings(listings, limit){
   return countPosted;
 }
 
-async function postRSRProducts(){
+async function postRSRProducts(limit){
   let filteredInventory = await getInventory();
-  let countPosted = await postAllListings(filteredInventory);
+  let countPosted = await postAllListings(filteredInventory, limit);
   return countPosted;
 }
 

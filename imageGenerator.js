@@ -1,6 +1,7 @@
 import sharp from 'sharp';
 import download from 'image-downloader';
 import chalk from 'chalk';
+import fs from 'fs';
 
 async function generateImages(url){
     return new Promise(async (resolve, reject) => {
@@ -11,15 +12,19 @@ async function generateImages(url){
         };
 
         await download.image(options)
-        .then( async ({ filename }) => {
+        .then( async () => {
             try{
                 sharp.cache(false);
+
                 let template = sharp("tmp/template.jpg");
-                let tmpBuffer = await sharp('tmp/tmp.jpeg').resize({ width: 950 }).toBuffer();
-                await sharp(tmpBuffer).toFile('tmp/tmp.jpeg');
+                let buffer = await sharp('tmp/tmp.jpeg').resize(930, 680, { fit: sharp.fit.inside }).toBuffer();
+                
+                await sharp(buffer).toFile("tmp/tmp.jpeg");
+
                 template.composite([
                     { input: 'tmp/tmp.jpeg' }, { input: 'tmp/text.png', gravity: 'south'}
                 ]);
+
                 await template.toFile('tmp/thumbnail.jpeg');
                 resolve();
             }catch (error) {

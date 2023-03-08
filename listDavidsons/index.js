@@ -24,11 +24,12 @@ async function getInventoryFile(){
           secure: false
       });
       await client.downloadTo("davidsons_inventory.csv", "davidsons_inventory.csv");
+      await client.downloadTo("DAV-inventory-with-MAP.txt", "DAV-inventory-with-MAP.txt");
   }
   catch(err) {
       console.log(err);
   }
-  console.log(chalk.bold.green("File downloaded."));
+  console.log(chalk.bold.green("Files downloaded."));
   client.close();
 }
 
@@ -42,13 +43,49 @@ async function getInventory(){
   let shotgunMisc = ['Shotgun: Over and Under', 'Shotgun: Over And Under'];
   let shotgunMisc2 = ['Shotgun: Side by Side', 'Shotgun: Side By Side'];
 
+  const data = fs.readFileSync('DAV-inventory-with-MAP.txt', 'utf-8');
+  const result = String(data).replace(/["]+/g, '');
+  fs.writeFileSync('DAV-inventory-with-MAP.txt', result, 'utf-8');
+
+  let productMAPs = csvToJson.fieldDelimiter('\t').formatValueByType().getJsonFromCsv('DAV-inventory-with-MAP.txt');
+
+  productMAPs = productMAPs.map((item) => {
+    let map;
+    let newItem = {};
+    if(item['RETAIL-MAP'] == 'N/A'){
+      map = 0;
+    }else{
+      map = Number(item['RETAIL-MAP']);
+    }
+
+    newItem.upc = parseInt(item.UPC);
+    newItem.map = map;
+    return newItem;
+  });
+
   let products = csvToJson.fieldDelimiter(',').getJsonFromCsv('davidsons_inventory.csv');
+
   let items = products.map((item) => {
+
+    if(item.Quantity == 'A*'){
+      item.Quantity = 0;
+    }else{
+      item.Quantity = parseInt(item.Quantity);
+    }
+
+    let info = productMAPs.find(product => product.upc === parseInt(item.UPCCode.replace('#', '')));
+    let map;
+    if(!info){
+      map = 0;
+    }else{
+      map = info.map;
+    }
+
     item.itemNo = item['Item#'];
+    item.map = map;
     item.MSP = Number(item.MSP.replace('$', ''));
     item.DealerPrice = Number(item.DealerPrice.replace('$', ''));
     item.RetailPrice = Number(item.RetailPrice.replace('$', ''));
-    item.Quantity = parseInt(item.Quantity);
     item.UPCCode = parseInt(item.UPCCode.replace('#', ''));
     item.imageURL = 'https://res.cloudinary.com/davidsons-inc/c_lpad,dpr_2.0,f_auto,h_635,q_100,w_635/v1/media/catalog/product/' + item.itemNo.charAt(0) + "/" + item.itemNo.charAt(1) + "/" + item.itemNo + ".jpg";
 
@@ -114,16 +151,15 @@ function postOnGunBroker(item){
 
       // Setting Price
       let price;
-      // Davidsons doesnt provide a MAP price
 
       let cost = item.DealerPrice;
-      let retail = item.RetailPrice; 
+      let map = item.map; 
 
       price = cost * 1.15; // set price to cost of gun plus 15% then round to 2 decimals
       price = (Math.round(price * 100) / 100).toFixed(2);
 
-      if(price < retail){ // if new price is lower than map, set price to map
-        price = retail;
+      if(price < map){ // if new price is lower than map, set price to map
+        price = map;
       }
       
       // Setting Category IDs and Shipping Prices
@@ -247,7 +283,8 @@ function postOnGunBroker(item){
           Other: false
         },
         ShippingClassCosts: { Ground: ShippingPrice },
-        StandardTextID: 1138,
+        SKU: 'DAV',
+        StandardTextID: 4713,
         Title: title,
         UPC: item.UPCCode,
         WhoPaysForShipping: 8,
@@ -269,7 +306,7 @@ function postOnGunBroker(item){
 
       let token = await GunBrokerAccessToken;
       
-      await axios.post('https://api.sandbox.gunbroker.com/v1/Items', data, {
+      await axios.post('https://api.gunbroker.com/v1/Items', data, {
         headers: {
           'Content-Type': 'multipart/form-data',
           'X-DevKey': process.env.GUNBROKER_DEVKEY,
@@ -328,10 +365,10 @@ async function postAllListings(listings, limit){
   return countPosted;
 }
 
-async function postDavidsonsProducts(){
+async function postDavidsonsProducts(limit){
   let inventory = await getInventory();
   let filteredInventory = filterInventory(inventory);
-  let countPosted = await postAllListings(filteredInventory);
+  let countPosted = await postAllListings(filteredInventory, limit);
   return countPosted;
 }
 
